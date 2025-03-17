@@ -10,4 +10,18 @@ services:
       - key: MONGODB_URI
         sync: false # This will be set manually in Render dashboard
       - key: FLASK_ENV
-        value: production 
+        value: production
+      - key: EMAIL_HOST
+        sync: false # Set manually in Render dashboard
+      - key: EMAIL_PORT
+        sync: false
+      - key: EMAIL_SECURE
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false 
