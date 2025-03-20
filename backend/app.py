@@ -14,7 +14,11 @@ load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+CORS(app, resources={r"/*": {"origins": [
+    "http://localhost:3000",
+    "https://planetwiseliving.com",
+    "https://www.planetwiseliving.com"
+]}})  # Enable CORS for specific origins
 
 # Configure upload settings
 UPLOAD_FOLDER = 'uploads'
