@@ -111,19 +111,33 @@ def update_states():
         errors = []
         
         print(f"Processing {len(all_markets)} markets...")
+        sys.stdout.flush()  # Ensure print is flushed to logs
         
-        for market in all_markets:
+        for i, market in enumerate(all_markets):
             try:
+                if not isinstance(market, dict):
+                    errors.append(f"Market at index {i} is not a dictionary: {type(market)}")
+                    continue
+                
+                market_id = market.get('_id')
+                if not market_id:
+                    errors.append(f"Market at index {i} has no _id field")
+                    continue
+                
                 address = market.get('Address', '')
                 if not address:
-                    errors.append(f"Market {market.get('_id')} has no Address field")
+                    errors.append(f"Market {market_id} has no Address field")
+                    continue
+                
+                if not isinstance(address, str):
+                    errors.append(f"Market {market_id} has non-string Address: {type(address)}")
                     continue
                     
                 state = extract_state(address)
                 if state:
                     updates.append(
                         UpdateOne(
-                            {'_id': market['_id']},  # ObjectId is fine here for querying
+                            {'_id': market_id},  # ObjectId is fine here for querying
                             {'$set': {'state': state}}
                         )
                     )
@@ -131,20 +145,38 @@ def update_states():
                 else:
                     errors.append(f"Could not extract state from address: {address}")
             except Exception as e:
-                errors.append(f"Error processing market {market.get('_id')}: {str(e)}")
+                errors.append(f"Error processing market {market.get('_id', 'unknown')}: {str(e)}")
+                print(f"Error processing market: {str(e)}")
+                sys.stdout.flush()
+        
+        print(f"Found {len(updates)} markets to update")
+        print(f"Found {len(errors)} errors")
+        sys.stdout.flush()
         
         if updates:
-            result = markets.bulk_write(updates)
-            # Create index on state field if it doesn't exist
-            markets.create_index('state', background=True)
-            return jsonify({
-                'success': True,
-                'message': f'Updated {result.modified_count} markets with state information',
-                'state_counts': state_counts,
-                'total_markets': len(all_markets),
-                'total_updates': len(updates),
-                'errors': errors[:100] if errors else []  # Return first 100 errors if any
-            })
+            try:
+                result = markets.bulk_write(updates)
+                # Create index on state field if it doesn't exist
+                markets.create_index('state', background=True)
+                return jsonify({
+                    'success': True,
+                    'message': f'Updated {result.modified_count} markets with state information',
+                    'state_counts': state_counts,
+                    'total_markets': len(all_markets),
+                    'total_updates': len(updates),
+                    'errors': errors[:100] if errors else []  # Return first 100 errors if any
+                })
+            except Exception as e:
+                print(f"Error during bulk write: {str(e)}")
+                sys.stdout.flush()
+                return jsonify({
+                    'success': False,
+                    'error': f'Error during bulk write: {str(e)}',
+                    'state_counts': state_counts,
+                    'total_markets': len(all_markets),
+                    'total_updates': len(updates),
+                    'errors': errors[:100] if errors else []
+                }), 500
         else:
             return jsonify({
                 'success': True,
@@ -154,10 +186,12 @@ def update_states():
             })
             
     except Exception as e:
-        print(f"Error updating state fields: {str(e)}", file=sys.stderr)
+        error_msg = f"Error updating state fields: {str(e)}"
+        print(error_msg, file=sys.stderr)
+        sys.stderr.flush()
         return jsonify({
             'success': False,
-            'error': str(e)
+            'error': error_msg
         }), 500
 
 def clean_data(df):
