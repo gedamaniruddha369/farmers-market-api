@@ -1,17 +1,24 @@
 const mongoose = require('mongoose');
 
 const marketSchema = new mongoose.Schema({
-  name: {
+  Name: {
     type: String,
-    required: true,
-    trim: true
-  },
-  address: {
-    street: String,
-    city: String,
-    state: String,
-    zipCode: String,
     required: true
+  },
+  Address: {
+    type: String,
+    required: true
+  },
+  // Modern field names (compatibility)
+  market_name: String,
+  market_address: String,
+  
+  state: {
+    type: String,
+    required: true
+  },
+  zipCode: {
+    type: String
   },
   location: {
     type: {
@@ -20,39 +27,33 @@ const marketSchema = new mongoose.Schema({
       default: 'Point'
     },
     coordinates: {
-      type: [Number],  // [longitude, latitude]
+      type: [Number],
       required: true
     }
   },
-  products: [{
-    type: String,
-    trim: true
-  }],
-  operatingHours: [{
-    day: String,
-    open: String,
-    close: String
-  }],
-  seasonDates: {
-    start: Date,
-    end: Date
-  },
+  latitude: Number,
+  longitude: Number,
+  USDA_listing_id: String,
+  phone_number: String,
   website: String,
-  phone: String,
-  paymentOptions: [{
-    type: String,
-    enum: ['Cash', 'Credit Card', 'SNAP', 'WIC', 'FMNP']
-  }],
-  isActive: {
-    type: Boolean,
-    default: true
-  }
-}, {
-  timestamps: true
+  image_link: String,
+  image_url: String,
+  google_maps_link: String,
+  google_place_id: String,
+  rating: Number,
+  products: [String]
 });
 
-// Create index for location-based queries
+// Create geospatial index for location-based queries
 marketSchema.index({ location: '2dsphere' });
+
+// Create text indexes for search
+marketSchema.index({ 
+  Name: 'text', 
+  market_name: 'text',
+  Address: 'text', 
+  market_address: 'text' 
+});
 
 const Market = mongoose.model('Market', marketSchema);
 

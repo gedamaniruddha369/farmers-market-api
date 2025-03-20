@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link, useLocation, useNavigate } from 'react-router-dom';
 import { Market } from '../types';
 import { getMarketDetails } from '../services/googlePlaces';
+import { getMarketById } from '../services/api';
 import SEOMetadata from './SEOMetadata';
 import { generateMarketStructuredData } from '../utils/structuredData';
 import { buildApiUrl } from '../services/apiConfig';
@@ -76,46 +77,61 @@ const MarketPage: React.FC = () => {
     }
   }, [location.state, id]);
 
-  // Fetch basic market data
+  // Fetch market data
   const fetchMarketData = async () => {
     setLoading(true);
     setError(null);
     try {
-      // Try to fetch from the API
-      const response = await fetch(buildApiUrl(`markets/${id}`));
-      if (!response.ok) {
-        throw new Error('Failed to fetch market details');
-      }
-      const data = await response.json();
-      setMarket(data);
-      
-      // Set initial image
-      if (data.image_link) {
-        setCurrentImageUrl(data.image_link);
+      const marketDetails = await getMarketById(id);
+      if (marketDetails) {
+        setMarket(marketDetails as Market);
+        
+        // Use image_url from the API response if available
+        if (marketDetails.image_url) {
+          setCurrentImageUrl(marketDetails.image_url);
+        } else if (marketDetails.google_maps_link) {
+          // Fallback to a street view image using the place from Google Maps link
+          const placeId = extractPlaceIdFromLink(marketDetails.google_maps_link);
+          if (placeId) {
+            setCurrentImageUrl(`https://maps.googleapis.com/maps/api/streetview?size=600x300&location=place_id:${placeId}&key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}`);
+          } else {
+            // Fallback to generic image
+            setCurrentImageUrl('/images/farmers-market-placeholder.jpg');
+          }
+        } else {
+          // Fallback to generic image
+          setCurrentImageUrl('/images/farmers-market-placeholder.jpg');
+        }
       } else {
-        const randomIndex = Math.floor(Math.random() * FALLBACK_IMAGES.length);
-        setCurrentImageUrl(FALLBACK_IMAGES[randomIndex]);
+        setError('Market not found.');
       }
     } catch (err) {
       console.error('Error fetching market:', err);
-      
-      // Try to fetch all markets and find the one we need
+      // Try to get the market from state data if API call fails
       try {
-        const stateResponse = await fetch(buildApiUrl('markets'));
-        if (stateResponse.ok) {
-          const allMarkets = await stateResponse.json();
-          const foundMarket = allMarkets.markets.find((m: Market) => m._id === id);
-          
+        const stateMarkets = sessionStorage.getItem('stateMarkets');
+        if (stateMarkets) {
+          const parsedMarkets = JSON.parse(stateMarkets);
+          const foundMarket = parsedMarkets.find((m: any) => m.id === id);
           if (foundMarket) {
-            setMarket(foundMarket);
-            if (foundMarket.image_link) {
-              setCurrentImageUrl(foundMarket.image_link);
+            setMarket(foundMarket as Market);
+            
+            // Use image_url if available
+            if (foundMarket.image_url) {
+              setCurrentImageUrl(foundMarket.image_url);
+            } else if (foundMarket.google_maps_link) {
+              // Fallback to a street view image
+              const placeId = extractPlaceIdFromLink(foundMarket.google_maps_link);
+              if (placeId) {
+                setCurrentImageUrl(`https://maps.googleapis.com/maps/api/streetview?size=600x300&location=place_id:${placeId}&key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}`);
+              } else {
+                setCurrentImageUrl('/images/farmers-market-placeholder.jpg');
+              }
             } else {
-              const randomIndex = Math.floor(Math.random() * FALLBACK_IMAGES.length);
-              setCurrentImageUrl(FALLBACK_IMAGES[randomIndex]);
+              setCurrentImageUrl('/images/farmers-market-placeholder.jpg');
             }
           } else {
-            setError('Market not found. Please try again later.');
+            setError('Failed to load market details. Please try again later.');
           }
         } else {
           setError('Failed to load market details. Please try again later.');
@@ -128,7 +144,16 @@ const MarketPage: React.FC = () => {
     }
   };
 
-  // Fetch Google Places data
+  // Helper function to extract place ID from Google Maps link
+  const extractPlaceIdFromLink = (link: string): string | undefined => {
+    const placeMatch = link.match(/place\/([^/]+)/);
+    if (placeMatch && placeMatch[1]) {
+      return placeMatch[1];
+    }
+    return undefined;
+  };
+
+  // Fetch Google Places data - only use for additional details, not for images
   useEffect(() => {
     const fetchGoogleData = async () => {
       if (!market) {
@@ -136,17 +161,22 @@ const MarketPage: React.FC = () => {
         return;
       }
 
-      // If we don't have a Google Place ID, we can't fetch Google data
-      if (!market.google_place_id) {
+      // If we don't have a Google Place ID and can't extract one from the link, we can't fetch Google data
+      let placeId = market.google_place_id;
+      if (!placeId && market.google_maps_link) {
+        placeId = extractPlaceIdFromLink(market.google_maps_link);
+      }
+      
+      if (!placeId) {
         setGoogleLoading(false);
         return;
       }
 
       setGoogleLoading(true);
       try {
-        const data = await getMarketDetails(market.google_place_id);
+        const data = await getMarketDetails(placeId);
         
-        // Process the data
+        // Process the data - but DON'T use for images unless necessary
         setGoogleData({
           name: data.name,
           formatted_address: data.formatted_address,
@@ -155,9 +185,10 @@ const MarketPage: React.FC = () => {
           rating: data.rating,
           user_ratings_total: data.user_ratings_total,
           opening_hours: data.opening_hours,
-          photos: data.photos?.map(photo => 
+          // Only set photos if we really need them (current image failed and we have no other option)
+          photos: imageError ? data.photos?.map(photo => 
             `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${photo.photo_reference}&key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}`
-          ),
+          ) : undefined,
           reviews: data.reviews?.map(review => ({
             text: review.text,
             rating: review.rating,
@@ -166,8 +197,8 @@ const MarketPage: React.FC = () => {
           }))
         });
 
-        // Update image if Google has better photos
-        if (data.photos && data.photos.length > 0 && !imageError) {
+        // Only update image if current image failed and Google has photos
+        if (imageError && data.photos && data.photos.length > 0) {
           setCurrentImageUrl(`https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${data.photos[0].photo_reference}&key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}`);
         }
       } catch (err) {
@@ -183,7 +214,7 @@ const MarketPage: React.FC = () => {
 
   // Search functionality
   useEffect(() => {
-    if (!searchTerm.trim() || !market) {
+    if (!searchTerm || !searchTerm.trim() || !market) {
       setSearchResults({
         infoMatches: false,
         reviewMatches: [],
@@ -199,11 +230,11 @@ const MarketPage: React.FC = () => {
 
     // Search in market info
     const marketInfo = [
-      market.Name,
-      market.Address,
-      market.phone_number,
-      market.website,
-      market.google_maps_link,
+      market.Name || '',
+      market.Address || '',
+      market.phone_number || '',
+      market.website || '',
+      market.google_maps_link || '',
       // Add any other fields you want to search
     ].filter(Boolean);
 
@@ -297,7 +328,21 @@ const MarketPage: React.FC = () => {
   };
 
   // Example market data structure for SEO purposes
-  const marketData = market || {
+  const marketData = market ? {
+    id: market._id,
+    name: market.Name,
+    address: market.Address,
+    city: market.Address.split(',')[0] || '', // Extract city from address
+    state: market.state || '', // Make state optional
+    zipCode: market.zipCode || '',
+    description: `Visit ${market.Name} in ${market.Address}. Find fresh produce, artisanal goods, and support local farmers.`,
+    openingHours: market.googleData?.currentOpeningHours || [],
+    telephone: market.phone_number || '',
+    website: market.website || '',
+    products: market.products || [],
+    latitude: market.latitude || 0,
+    longitude: market.longitude || 0
+  } : {
     id: id || '',
     name: 'Farmers Market',
     address: '123 Market Street',
@@ -315,6 +360,26 @@ const MarketPage: React.FC = () => {
 
   // Generate structured data for this market
   const structuredData = generateMarketStructuredData(marketData);
+
+  // Generate SEO metadata
+  const seoMetadata = market ? {
+    title: `${market.Name} - Farmers Market in ${market.state || 'United States'}`,
+    description: `Visit ${market.Name}, a local farmers market located at ${market.Address}. ${market.phone_number ? `Contact us at ${market.phone_number}.` : ''} Find fresh local produce and support local farmers.`,
+    keywords: `farmers market, ${market.Name}, local produce, ${market.state || ''} farmers market, fresh produce, local farmers`,
+    openGraph: {
+      title: `${market.Name} - Farmers Market`,
+      description: `Visit ${market.Name}, a local farmers market located at ${market.Address}.`,
+      image: currentImageUrl || FALLBACK_IMAGES[0],
+      type: 'business',
+      site_name: 'Farmers Market Directory'
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: `${market.Name} - Farmers Market`,
+      description: `Visit ${market.Name}, a local farmers market located at ${market.Address}.`,
+      image: currentImageUrl || FALLBACK_IMAGES[0]
+    }
+  } : null;
 
   if (loading) {
     return (
@@ -339,13 +404,7 @@ const MarketPage: React.FC = () => {
 
   return (
     <>
-      <SEOMetadata
-        title={`${marketData.name} - Farmers Market in ${marketData.city}, ${marketData.state} | PlanetWiseLiving`}
-        description={`Visit ${marketData.name} in ${marketData.city}, ${marketData.state}. Find fresh produce, artisanal goods, and support local farmers. Open ${marketData.openingHours?.[0] || 'weekly'}.`}
-        keywords={`farmers market, ${marketData.city.toLowerCase()}, ${marketData.state.toLowerCase()}, local produce, organic food, ${marketData.products?.join(', ').toLowerCase() || ''}`}
-        canonicalUrl={`/market/${id}`}
-        structuredData={structuredData}
-      />
+      {seoMetadata && <SEOMetadata {...seoMetadata} />}
       
       <div className="container mx-auto px-4 py-8">
         <div className="mb-4">
@@ -454,181 +513,15 @@ const MarketPage: React.FC = () => {
                 </button>
                 <button
                   onClick={() => setActiveTab('reviews')}
-                  className={`mr-8 py-4 px-1 border-b-2 font-medium text-sm ${
+                  className={`flex-1 py-2 text-center ${
                     activeTab === 'reviews'
-                      ? 'border-green-500 text-green-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                      ? 'bg-green-700 text-white font-bold'
+                      : 'bg-gray-200 hover:bg-gray-300'
                   }`}
                 >
                   Reviews
                 </button>
-                <button
-                  onClick={() => setActiveTab('photos')}
-                  className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                    activeTab === 'photos'
-                      ? 'border-green-500 text-green-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                  }`}
-                >
-                  Photos
-                </button>
               </nav>
-            </div>
-
-            {/* Tab Content */}
-            <div className="mt-6">
-              {/* Info Tab */}
-              {activeTab === 'info' && (
-                <div>
-                  {/* Hours */}
-                  {googleData?.opening_hours && (
-                    <div className="mb-6">
-                      <h2 className="text-xl font-semibold text-green-700 mb-3">Hours</h2>
-                      <div className="bg-gray-50 p-4 rounded-lg">
-                        {googleData.opening_hours.weekday_text.map((day, index) => (
-                          <div key={index} className="py-1 flex">
-                            <div className="w-32 font-medium">{day.split(': ')[0]}:</div>
-                            <div>{day.split(': ')[1]}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Contact */}
-                  <div className="mb-6">
-                    <h2 className="text-xl font-semibold text-green-700 mb-3">Contact</h2>
-                    <div className="space-y-3">
-                      {(googleData?.formatted_phone_number || market.phone_number) && (
-                        <div className="flex items-start">
-                          <svg className="w-5 h-5 text-green-600 mr-3 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                            <path d="M2 3a1 1 0 011-1h2.153a1 1 0 01.986.836l.74 4.435a1 1 0 01-.54 1.06l-1.548.773a11.037 11.037 0 006.105 6.105l.774-1.548a1 1 0 011.059-.54l4.435.74a1 1 0 01.836.986V17a1 1 0 01-1 1h-2C7.82 18 2 12.18 2 5V3z" />
-                          </svg>
-                          <div>
-                            <div className="font-medium">Phone</div>
-                            <a href={`tel:${googleData?.formatted_phone_number || market.phone_number}`} className="text-blue-600 hover:text-blue-800">
-                              {googleData?.formatted_phone_number || market.phone_number}
-                            </a>
-                          </div>
-                        </div>
-                      )}
-
-                      {(googleData?.website || market.website) && (
-                        <div className="flex items-start">
-                          <svg className="w-5 h-5 text-green-600 mr-3 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M4.083 9h1.946c.089-1.546.383-2.97.837-4.118A6.004 6.004 0 004.083 9zM10 2a8 8 0 100 16 8 8 0 000-16zm0 2c-.076 0-.232.032-.465.262-.238.234-.497.623-.737 1.182-.389.907-.673 2.142-.766 3.556h3.936c-.093-1.414-.377-2.649-.766-3.556-.24-.56-.5-.948-.737-1.182C10.232 4.032 10.076 4 10 4zm3.971 5c-.089-1.546-.383-2.97-.837-4.118A6.004 6.004 0 0115.917 9h-1.946zm-2.003 2H8.032c.093 1.414.377 2.649.766 3.556.24.56.5.948.737 1.182.233.23.389.262.465.262.076 0 .232-.032.465-.262.238-.234.498-.623.737-1.182.389-.907.673-2.142.766-3.556zm1.166 4.118c.454-1.147.748-2.572.837-4.118h1.946a6.004 6.004 0 01-2.783 4.118zm-6.268 0C6.412 13.97 6.118 12.546 6.03 11H4.083a6.004 6.004 0 002.783 4.118z" clipRule="evenodd" />
-                          </svg>
-                          <div>
-                            <div className="font-medium">Website</div>
-                            <a href={googleData?.website || market.website} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800 break-all">
-                              {googleData?.website || market.website}
-                            </a>
-                          </div>
-                        </div>
-                      )}
-
-                      {market.google_maps_link && (
-                        <div className="flex items-start">
-                          <svg className="w-5 h-5 text-green-600 mr-3 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
-                          </svg>
-                          <div>
-                            <div className="font-medium">Directions</div>
-                            <a href={market.google_maps_link} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800">
-                              Get directions
-                            </a>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Map */}
-                  {market.latitude && market.longitude && (
-                    <div className="mb-6">
-                      <h2 className="text-xl font-semibold text-green-700 mb-3">Location</h2>
-                      <div className="h-64 bg-gray-100 rounded-lg overflow-hidden">
-                        <iframe
-                          title="Market Location"
-                          width="100%"
-                          height="100%"
-                          frameBorder="0"
-                          src={`https://www.google.com/maps/embed/v1/place?key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}&q=${market.latitude},${market.longitude}&zoom=15`}
-                          allowFullScreen
-                        ></iframe>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Reviews Tab */}
-              {activeTab === 'reviews' && (
-                <div>
-                  {googleLoading ? (
-                    <div className="flex justify-center py-8">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
-                    </div>
-                  ) : googleData?.reviews && googleData.reviews.length > 0 ? (
-                    <div className="space-y-6">
-                      {googleData.reviews.map((review, index) => (
-                        <div key={index} className={`border-b border-gray-100 pb-6 last:border-b-0 ${searchTerm && searchResults.reviewMatches.includes(review.text) ? 'bg-green-50 p-4 rounded-lg -mx-4' : ''}`}>
-                          <div className="flex items-center mb-2">
-                            <div className="font-medium">{review.author}</div>
-                            <div className="ml-auto text-sm text-gray-500">{review.relative_time}</div>
-                          </div>
-                          <div className="flex items-center mb-2">
-                            {[...Array(5)].map((_, i) => (
-                              <span key={i} className={i < review.rating ? "text-yellow-400" : "text-gray-400"}>★</span>
-                            ))}
-                          </div>
-                          <p className="text-gray-600">
-                            {searchTerm && searchResults.highlightedContent[`review-${index}`] 
-                              ? searchResults.highlightedContent[`review-${index}`] 
-                              : review.text}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 text-gray-500">
-                      No reviews available for this market.
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Photos Tab */}
-              {activeTab === 'photos' && (
-                <div>
-                  {googleLoading ? (
-                    <div className="text-center py-8">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500 mx-auto"></div>
-                      <p className="mt-2 text-gray-500">Loading photos...</p>
-                    </div>
-                  ) : googleData?.photos && googleData.photos.length > 0 ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {googleData.photos.map((photo, index) => (
-                        <div key={index} className="rounded-lg overflow-hidden h-48">
-                          <img
-                            src={photo}
-                            alt={`${market.Name} - Photo ${index + 1}`}
-                            className="w-full h-full object-cover"
-                            onError={(e) => {
-                              // Hide the image if it fails to load
-                              (e.target as HTMLImageElement).style.display = 'none';
-                            }}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 text-gray-500">
-                      No photos available for this market.
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -637,4 +530,4 @@ const MarketPage: React.FC = () => {
   );
 };
 
-export default MarketPage; 
+export default MarketPage;

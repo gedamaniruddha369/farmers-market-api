@@ -46,6 +46,14 @@ def get_db():
     mongo_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/farmers_market')
     client = MongoClient(mongo_uri)
     db = client.farmers_market
+    
+    # Create indexes for better search performance
+    markets = db.markets
+    markets.create_index([("Name", "text"), ("Address", "text")])
+    markets.create_index("state")
+    markets.create_index("usda_listing_id", unique=True)
+    markets.create_index([("longitude", 1), ("latitude", 1)])
+    
     return db
 
 def allowed_file(filename):
@@ -67,7 +75,9 @@ def extract_state(address):
         'OR': 'Oregon', 'PA': 'Pennsylvania', 'RI': 'Rhode Island', 'SC': 'South Carolina',
         'SD': 'South Dakota', 'TN': 'Tennessee', 'TX': 'Texas', 'UT': 'Utah',
         'VT': 'Vermont', 'VA': 'Virginia', 'WA': 'Washington', 'WV': 'West Virginia',
-        'WI': 'Wisconsin', 'WY': 'Wyoming', 'DC': 'District of Columbia'
+        'WI': 'Wisconsin', 'WY': 'Wyoming', 'DC': 'District of Columbia',
+        'PR': 'Puerto Rico',
+        'VI': 'Virgin Islands'
     }
     
     # Create reverse mapping (full name to abbreviation)
@@ -82,43 +92,74 @@ def extract_state(address):
     
     # Normalize the address
     address = address.replace('.', '')  # Remove periods
-    address = re.sub(r'\s+', ' ', address)  # Normalize whitespace
-    address = address.strip()
+    address_clean = re.sub(r'\s+', ' ', address).strip()
     
-    # Try to find state abbreviation followed by zip code (most common format)
-    state_abbr_match = re.search(r'[,\s]+([A-Z]{2})[\s,]*\d', address)
-    if state_abbr_match:
-        state_abbr = state_abbr_match.group(1)
+    # *** SPECIAL CASES FIRST ***
+    # Handle Massachusetts special case (multiple spellings)
+    address_upper = address_clean.upper()
+    if ', MASSACHUSSETTS' in address_upper or ', MASSACHUSETTS' in address_upper:
+        return 'MA'
+    
+    # Handle Wisconsin special case
+    if re.search(r'\b(WI|WISC|WISCONSIN)\b', address_upper):
+        return 'WI'
+    
+    # Handle Puerto Rico special case
+    if 'PUERTO RICO' in address_upper:
+        return 'PR'
+    
+    # Handle Virgin Islands special case
+    if 'VIRGIN ISLANDS' in address_upper or ', VI' in address_upper:
+        return 'VI'
+    
+    # *** STANDARD PATTERN MATCHING ***
+    # Look for state abbreviation followed by zip code (most common format)
+    state_zip_match = re.search(r'[,\s]+([A-Z]{2})[,\s]*\d{5}', address_upper)
+    if state_zip_match:
+        state_abbr = state_zip_match.group(1)
         if state_abbr in state_mapping:
             return state_abbr
     
-    # Try to find state name in "City, State ZIP" format
-    state_match = re.search(r'[,\s]+([^,\d]+?)(?:\s+\d|\s*,|\s*$)', address)
-    if state_match:
-        state_name = state_match.group(1).strip().lower()
-        if state_name in reverse_mapping:
-            return reverse_mapping[state_name]
-    
-    # Try to find state abbreviation anywhere in the address
-    for abbr in state_mapping.keys():
-        pattern = fr'[,\s]+{abbr}(?:[,\s]+|$)'
-        if re.search(pattern, address):
-            return abbr
-    
-    # Try to find full state name anywhere in address
-    for state_name in state_mapping.values():
-        pattern = fr'[,\s]+{state_name}(?:[,\s]+|$)'
-        if re.search(pattern, address, re.IGNORECASE):
-            return reverse_mapping[state_name.lower()]
-    
-    # Try to find state abbreviation at the end of the address
-    state_end_match = re.search(r'[,\s]+([A-Z]{2})(?:\s+|$)', address)
+    # Look for state abbreviation at end of string or followed by comma
+    state_end_match = re.search(r'[,\s]+([A-Z]{2})(\s*$|,)', address_upper)
     if state_end_match:
         state_abbr = state_end_match.group(1)
         if state_abbr in state_mapping:
             return state_abbr
     
+    # Look for full state names
+    for state_abbr, state_name in state_mapping.items():
+        if state_name.upper() in address_upper:
+            return state_abbr
+    
+    # Fallback for abbreviations
+    for state_abbr in state_mapping.keys():
+        if f', {state_abbr}' in address_upper or f' {state_abbr} ' in address_upper:
+            return state_abbr
+    
     return None
+
+def extract_place_id(google_maps_link):
+    """Extract place_id and image URL from Google Maps link"""
+    if not google_maps_link:
+        return None, None
+        
+    # Try to extract place_id from the URL
+    place_id_match = re.search(r'place/([^/]+)', google_maps_link)
+    if place_id_match:
+        place_id = place_id_match.group(1)
+        # Generate a static image URL that doesn't require API key
+        image_url = f"https://maps.googleapis.com/maps/api/streetview?size=600x300&location=place_id:{place_id}&key={os.getenv('GOOGLE_MAPS_API_KEY', '')}"
+        return place_id, image_url
+    
+    # If no place_id found, try to get the CID
+    cid_match = re.search(r'cid=(\d+)', google_maps_link)
+    if cid_match:
+        cid = cid_match.group(1)
+        # Return a CID-based identifier and no image (fallback images don't work with CID)
+        return f"cid:{cid_match.group(1)}", None
+        
+    return None, None
 
 @app.route('/update-states', methods=['POST'])
 def update_states():
@@ -157,14 +198,28 @@ def update_states():
                     continue
                     
                 state = extract_state(address)
+                update_dict = {}
+                
                 if state:
+                    update_dict['state'] = state
+                    state_counts[state] = state_counts.get(state, 0) + 1
+                
+                # Extract place_id if available
+                google_maps_link = market.get('google_maps_link')
+                if google_maps_link:
+                    place_id, image_url = extract_place_id(google_maps_link)
+                    if place_id:
+                        update_dict['place_id'] = place_id
+                        if image_url:
+                            update_dict['image_url'] = image_url
+                
+                if update_dict:
                     updates.append(
                         UpdateOne(
-                            {'_id': market_id},  # ObjectId is fine here for querying
-                            {'$set': {'state': state}}
+                            {'_id': market_id},
+                            {'$set': update_dict}
                         )
                     )
-                    state_counts[state] = state_counts.get(state, 0) + 1
                 else:
                     errors.append(f"Could not extract state from address: {address}")
             except Exception as e:
@@ -179,8 +234,9 @@ def update_states():
         if updates:
             try:
                 result = markets.bulk_write(updates)
-                # Create index on state field if it doesn't exist
+                # Create indexes
                 markets.create_index('state', background=True)
+                markets.create_index('place_id', background=True)
                 return jsonify({
                     'success': True,
                     'message': f'Updated {result.modified_count} markets with state information',
@@ -294,82 +350,129 @@ def upload_file():
 def get_markets():
     """Get all markets with pagination"""
     try:
-        # Get pagination parameters
+        db = get_db()
+        
+        # Parse pagination parameters
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
         state = request.args.get('state')
         
-        # Get database connection
-        db = get_db()
-        
-        # Build query
-        query = {}
-        if state:
-            query['state'] = state
-        
         # Calculate skip value for pagination
         skip = (page - 1) * per_page
         
-        # Get total count of documents
-        total_markets = db.markets.count_documents(query)
+        # Build filter
+        filter_query = {}
+        if state:
+            filter_query['state'] = state.upper()
         
-        # Get paginated markets
-        markets = list(db.markets.find(query).skip(skip).limit(per_page))
+        # Get total count for pagination
+        total_markets = db.markets.count_documents(filter_query)
         
-        # Convert ObjectId to string for JSON serialization
-        for market in markets:
-            market['_id'] = str(market['_id'])
-        
-        return jsonify({
-            'success': True,
-            'markets': markets,
-            'pagination': {
-                'total': total_markets,
-                'page': page,
-                'per_page': per_page,
-                'total_pages': math.ceil(total_markets / per_page)
+        # Get markets with pagination
+        markets = list(db.markets.find(
+            filter_query,
+            {
+                '_id': 0,
+                'market_name': 1,
+                'market_address': 1,
+                'state': 1,
+                'zipCode': 1,
+                'latitude': 1,
+                'longitude': 1,
+                'phone_number': 1,
+                'website': 1,
+                'USDA_listing_id': 1,
+                'rating': 1,
+                'google_maps_link': 1,
+                'image_url': 1
             }
-        })
+        ).skip(skip).limit(per_page))
         
-    except Exception as e:
-        print(f"Error in get_markets: {str(e)}", file=sys.stderr)
+        # For markets without an image_url but with a google_maps_link, generate a fallback image URL
+        for market in markets:
+            if not market.get('image_url') and market.get('google_maps_link'):
+                _, image_url = extract_place_id(market['google_maps_link'])
+                if image_url:
+                    market['image_url'] = image_url
+        
         return jsonify({
-            'success': False,
-            'error': str(e),
-            'message': 'Failed to load markets. Please try again later.'
-        }), 500
+            'markets': markets,
+            'total': total_markets,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': math.ceil(total_markets / per_page)
+        })
+    except Exception as e:
+        print(f"Error in /api/markets: {str(e)}")
+        sys.stdout.flush()
+        return jsonify({'error': str(e)}), 500
 
 @api.route('/markets/search', methods=['GET'])
 def search_markets():
-    """Search markets by coordinates within a radius"""
+    """Search markets with location-based support"""
     try:
+        query = request.args.get('q', '').lower()
+        state = request.args.get('state')
+        lat = request.args.get('lat', type=float)
+        lng = request.args.get('lng', type=float)
+        radius = request.args.get('radius', type=float, default=50)  # Default 50 miles radius
+        
         db = get_db()
         markets = db.markets
         
-        lat = float(request.args.get('lat'))
-        lng = float(request.args.get('lng'))
-        radius = float(request.args.get('radius', 10))  # Default 10 miles
+        # Build search query
+        search_query = {}
         
-        # MongoDB geospatial query
-        query = {
-            'location': {
-                '$near': {
-                    '$geometry': {
-                        'type': 'Point',
-                        'coordinates': [lng, lat]
-                    },
-                    '$maxDistance': radius * 1609.34  # Convert miles to meters
+        # Handle location-based search - only apply if both lat and lng are provided
+        if lat is not None and lng is not None:
+            try:
+                # Convert radius from miles to meters (1 mile = 1609.34 meters)
+                radius_meters = radius * 1609.34
+                
+                # Add geospatial query
+                search_query['location'] = {
+                    '$near': {
+                        '$geometry': {
+                            'type': 'Point',
+                            'coordinates': [lng, lat]
+                        },
+                        '$maxDistance': radius_meters
+                    }
                 }
-            }
-        }
+            except Exception as loc_error:
+                print(f"Error with geospatial query: {str(loc_error)}")
+                # Don't add location query if there was an error
+                pass
         
-        market_list = list(markets.find(query))
-        # Convert ObjectId to string for JSON serialization
-        for market in market_list:
+        # Handle text search
+        if query:
+            search_query['$text'] = {'$search': query}
+        
+        # Handle state filter
+        if state:
+            search_query['state'] = state.upper()
+        
+        # Execute search
+        results = list(markets.find(search_query))
+        
+        # Process results
+        processed_results = []
+        for market in results:
             market['_id'] = str(market['_id'])
-        return jsonify(market_list)
-    except (ValueError, TypeError):
-        return jsonify({'error': 'Invalid coordinates or radius'}), 400
+            processed_results.append(market)
+        
+        return jsonify({
+            'success': True,
+            'count': len(processed_results),
+            'markets': processed_results
+        })
+        
+    except Exception as e:
+        print(f"Search error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 400  # Return 400 for client errors
 
 @api.route('/markets/state-counts', methods=['GET'])
 def get_state_counts():
