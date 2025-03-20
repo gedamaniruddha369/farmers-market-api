@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, Blueprint
 from flask_cors import CORS
 from pymongo import MongoClient
 from dotenv import load_dotenv
@@ -27,6 +27,9 @@ CORS(app, resources={r"/*": {
     "allow_headers": ["Content-Type", "Authorization"],
     "supports_credentials": True
 }})
+
+# Create API blueprint
+api = Blueprint('api', __name__, url_prefix='/api')
 
 # Configure upload settings
 UPLOAD_FOLDER = 'uploads'
@@ -120,25 +123,31 @@ def upload_file():
     
     return jsonify({'error': 'Invalid file type'}), 400
 
-@app.route('/markets', methods=['GET'])
+@api.route('/markets', methods=['GET'])
 def get_markets():
     """Get all markets with pagination"""
     try:
         # Get pagination parameters
         page = int(request.args.get('page', 1))
         per_page = int(request.args.get('per_page', 10))
+        state = request.args.get('state')
         
         # Get database connection
         db = get_db()
+        
+        # Build query
+        query = {}
+        if state:
+            query['state'] = state
         
         # Calculate skip value for pagination
         skip = (page - 1) * per_page
         
         # Get total count of documents
-        total_markets = db.markets.count_documents({})
+        total_markets = db.markets.count_documents(query)
         
         # Get paginated markets
-        markets = list(db.markets.find({}).skip(skip).limit(per_page))
+        markets = list(db.markets.find(query).skip(skip).limit(per_page))
         
         # Convert ObjectId to string for JSON serialization
         for market in markets:
@@ -146,11 +155,13 @@ def get_markets():
         
         return jsonify({
             'success': True,
-            'data': markets,
-            'total': total_markets,
-            'page': page,
-            'per_page': per_page,
-            'total_pages': math.ceil(total_markets / per_page)
+            'markets': markets,
+            'pagination': {
+                'total': total_markets,
+                'page': page,
+                'per_page': per_page,
+                'total_pages': math.ceil(total_markets / per_page)
+            }
         })
         
     except Exception as e:
@@ -161,7 +172,7 @@ def get_markets():
             'message': 'Failed to load markets. Please try again later.'
         }), 500
 
-@app.route('/markets/search', methods=['GET'])
+@api.route('/markets/search', methods=['GET'])
 def search_markets():
     """Search markets by coordinates within a radius"""
     try:
@@ -193,31 +204,27 @@ def search_markets():
     except (ValueError, TypeError):
         return jsonify({'error': 'Invalid coordinates or radius'}), 400
 
-@app.route('/markets/<market_id>', methods=['GET'])
-def get_market(market_id):
-    """Get a specific market by ID"""
+@api.route('/markets/state-counts', methods=['GET'])
+def get_state_counts():
+    """Get the count of markets by state"""
     try:
         db = get_db()
-        market = db.markets.find_one({'_id': market_id})
+        pipeline = [
+            {'$group': {'_id': '$state', 'count': {'$sum': 1}}}
+        ]
+        state_counts = list(db.markets.aggregate(pipeline))
         
-        if market:
-            market['_id'] = str(market['_id'])
-            return jsonify({
-                'success': True,
-                'data': market
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': 'Market not found'
-            }), 404
-            
+        return jsonify({
+            'success': True,
+            'data': state_counts
+        })
+        
     except Exception as e:
-        print(f"Error in get_market: {str(e)}", file=sys.stderr)
+        print(f"Error in get_state_counts: {str(e)}", file=sys.stderr)
         return jsonify({
             'success': False,
             'error': str(e),
-            'message': 'Failed to load market details. Please try again later.'
+            'message': 'Failed to load state counts. Please try again later.'
         }), 500
 
 @app.route('/test-connection', methods=['GET'])
@@ -243,29 +250,6 @@ def test_connection():
         return jsonify({
             'status': 'error',
             'error': str(e)
-        }), 500
-
-@app.route('/markets/state-counts', methods=['GET'])
-def get_state_counts():
-    """Get the count of markets by state"""
-    try:
-        db = get_db()
-        pipeline = [
-            {'$group': {'_id': '$state', 'count': {'$sum': 1}}}
-        ]
-        state_counts = list(db.markets.aggregate(pipeline))
-        
-        return jsonify({
-            'success': True,
-            'data': state_counts
-        })
-        
-    except Exception as e:
-        print(f"Error in get_state_counts: {str(e)}", file=sys.stderr)
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'message': 'Failed to load state counts. Please try again later.'
         }), 500
 
 @app.route('/debug', methods=['GET'])
@@ -389,6 +373,9 @@ def debug_markets_sample():
             'success': False,
             'error': str(e)
         }), 500
+
+# Register the blueprint
+app.register_blueprint(api)
 
 if __name__ == '__main__':
     # Get port from environment variable or default to 5000
