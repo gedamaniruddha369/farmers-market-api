@@ -80,15 +80,20 @@ def extract_state(address):
     if not isinstance(address, str):
         address = str(address)
     
-    # Try to find state abbreviation followed by zip code
-    state_abbr_match = re.search(r',\s*([A-Z]{2})[,\s]*\d', address)
+    # Normalize the address
+    address = address.replace('.', '')  # Remove periods
+    address = re.sub(r'\s+', ' ', address)  # Normalize whitespace
+    address = address.strip()
+    
+    # Try to find state abbreviation followed by zip code (most common format)
+    state_abbr_match = re.search(r'[,\s]+([A-Z]{2})[\s,]*\d', address)
     if state_abbr_match:
         state_abbr = state_abbr_match.group(1)
         if state_abbr in state_mapping:
             return state_abbr
     
     # Try to find state name in "City, State ZIP" format
-    state_match = re.search(r',\s*([^,\d]+?)(?:\s+\d|\s*,|\s*$)', address)
+    state_match = re.search(r'[,\s]+([^,\d]+?)(?:\s+\d|\s*,|\s*$)', address)
     if state_match:
         state_name = state_match.group(1).strip().lower()
         if state_name in reverse_mapping:
@@ -96,13 +101,22 @@ def extract_state(address):
     
     # Try to find state abbreviation anywhere in the address
     for abbr in state_mapping.keys():
-        if f", {abbr}" in address or f",{abbr}" in address:
+        pattern = fr'[,\s]+{abbr}(?:[,\s]+|$)'
+        if re.search(pattern, address):
             return abbr
     
     # Try to find full state name anywhere in address
     for state_name in state_mapping.values():
-        if state_name.lower() in address.lower():
+        pattern = fr'[,\s]+{state_name}(?:[,\s]+|$)'
+        if re.search(pattern, address, re.IGNORECASE):
             return reverse_mapping[state_name.lower()]
+    
+    # Try to find state abbreviation at the end of the address
+    state_end_match = re.search(r'[,\s]+([A-Z]{2})(?:\s+|$)', address)
+    if state_end_match:
+        state_abbr = state_end_match.group(1)
+        if state_abbr in state_mapping:
+            return state_abbr
     
     return None
 
