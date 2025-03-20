@@ -75,7 +75,14 @@ def extract_state(address):
     
     if not address:
         return None
-        
+    
+    # Try to find state name in "City, State ZIP" format
+    state_match = re.search(r',\s*([^,\d]+)\s+\d', address)
+    if state_match:
+        state_name = state_match.group(1).strip().lower()
+        if state_name in reverse_mapping:
+            return reverse_mapping[state_name]
+    
     # Try to find state abbreviation in address
     state_abbr_match = re.search(r',\s*([A-Z]{2})\s*\d', address)
     if state_abbr_match:
@@ -83,7 +90,7 @@ def extract_state(address):
         if state_abbr in state_mapping:
             return state_abbr
     
-    # Try to find full state name in address
+    # Try to find full state name anywhere in address
     for state_name in state_mapping.values():
         if state_name.lower() in address.lower():
             return reverse_mapping[state_name.lower()]
@@ -100,6 +107,7 @@ def update_states():
         # Get all markets
         all_markets = list(markets.find({}))
         updates = []
+        state_counts = {}
         
         print(f"Processing {len(all_markets)} markets...")
         
@@ -112,6 +120,7 @@ def update_states():
                         {'$set': {'state': state}}
                     )
                 )
+                state_counts[state] = state_counts.get(state, 0) + 1
         
         if updates:
             result = markets.bulk_write(updates)
@@ -119,7 +128,8 @@ def update_states():
             markets.create_index('state')
             return jsonify({
                 'success': True,
-                'message': f'Updated {result.modified_count} markets with state information'
+                'message': f'Updated {result.modified_count} markets with state information',
+                'state_counts': state_counts
             })
         else:
             return jsonify({
