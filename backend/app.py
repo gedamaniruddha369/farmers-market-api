@@ -116,7 +116,7 @@ def update_states():
             if state:
                 updates.append(
                     UpdateOne(
-                        {'_id': market['_id']},
+                        {'_id': market['_id']},  # ObjectId is fine here for querying
                         {'$set': {'state': state}}
                     )
                 )
@@ -124,17 +124,20 @@ def update_states():
         
         if updates:
             result = markets.bulk_write(updates)
-            # Create index on state field
-            markets.create_index('state')
+            # Create index on state field if it doesn't exist
+            markets.create_index('state', background=True)
             return jsonify({
                 'success': True,
                 'message': f'Updated {result.modified_count} markets with state information',
-                'state_counts': state_counts
+                'state_counts': state_counts,
+                'total_markets': len(all_markets),
+                'total_updates': len(updates)
             })
         else:
             return jsonify({
                 'success': True,
-                'message': 'No updates needed'
+                'message': 'No updates needed',
+                'total_markets': len(all_markets)
             })
             
     except Exception as e:
