@@ -1,2 +1,2 @@
 ﻿#!/bin/bash
-gunicorn wsgi:app
+gunicorn wsgi_app:app
