@@ -29,11 +29,12 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-# MongoDB connection
-mongo_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/farmers_market')
-client = MongoClient(mongo_uri)
-db = client.farmers_market
-markets = db.markets
+def get_db():
+    """Get MongoDB connection and database"""
+    mongo_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/farmers_market')
+    client = MongoClient(mongo_uri)
+    db = client.farmers_market
+    return db
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -115,6 +116,9 @@ def upload_file():
 def get_markets():
     """Get all markets or filter by location"""
     try:
+        db = get_db()
+        markets = db.markets
+        
         zip_code = request.args.get('zip_code')
         state = request.args.get('state')
         lat = request.args.get('lat')
@@ -206,6 +210,9 @@ def get_markets():
 def search_markets():
     """Search markets by coordinates within a radius"""
     try:
+        db = get_db()
+        markets = db.markets
+        
         lat = float(request.args.get('lat'))
         lng = float(request.args.get('lng'))
         radius = float(request.args.get('radius', 10))  # Default 10 miles
@@ -234,16 +241,22 @@ def search_markets():
 @app.route('/api/markets/<market_id>', methods=['GET'])
 def get_market(market_id):
     """Get a specific market by ID"""
-    market = markets.find_one({'id': market_id}, {'_id': 0})
-    if market:
-        return jsonify(market)
-    return jsonify({'error': 'Market not found'}), 404
+    try:
+        db = get_db()
+        markets = db.markets
+        market = markets.find_one({'id': market_id}, {'_id': 0})
+        if market:
+            return jsonify(market)
+        return jsonify({'error': 'Market not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
-# Add a new route to test MongoDB connection
 @app.route('/api/test-connection', methods=['GET'])
 def test_connection():
     """Test MongoDB connection and return basic stats"""
     try:
+        db = get_db()
+        markets = db.markets
         # Test MongoDB connection
         total_markets = markets.count_documents({})
         sample_market = markets.find_one()
@@ -267,6 +280,9 @@ def test_connection():
 def get_state_counts():
     """Get count of markets for each state"""
     try:
+        db = get_db()
+        markets = db.markets
+        
         # First, get total count of all markets
         total_count = markets.count_documents({})
         print(f"\nTotal markets in database: {total_count}")
@@ -282,7 +298,8 @@ def get_state_counts():
                                     '$split': [
                                         {
                                             '$trim': {
-                                                'input': '$Address'
+                                                'input': '$Address',
+                                                'chars': ' '
                                             }
                                         },
                                         ','
@@ -297,12 +314,12 @@ def get_state_counts():
                                             'then': {'$arrayElemAt': ['$address_parts', -2]},
                                             'else': {'$arrayElemAt': ['$address_parts', -1]}
                                         }
-                                    }
+                                    },
+                                    'chars': ' '
                                 }
                             }
                         }
-                    },
-                    'Address': 1
+                    }
                 }
             },
             {
@@ -313,14 +330,7 @@ def get_state_counts():
             {
                 '$group': {
                     '_id': '$state',
-                    'count': {'$sum': 1},
-                    'sample_addresses': {'$push': '$Address'}
-                }
-            },
-            {
-                '$project': {
-                    'count': 1,
-                    'sample_addresses': {'$slice': ['$sample_addresses', 3]}
+                    'count': {'$sum': 1}
                 }
             },
             {
@@ -340,27 +350,6 @@ def get_state_counts():
         print("\nState-by-state breakdown:")
         for state in state_counts:
             print(f"{state['_id']}: {state['count']} markets")
-            print("Sample addresses:")
-            for addr in state['sample_addresses'][:3]:
-                print(f"  {addr}")
-        
-        # Print states with potential issues
-        print("\nChecking for potential issues in state extraction...")
-        sample_markets = list(markets.find({}).limit(5))
-        for market in sample_markets:
-            addr = market.get('Address', '')
-            parts = [p.strip() for p in addr.split(',')]
-            print(f"\nAddress: {addr}")
-            print(f"Parts: {parts}")
-            if len(parts) >= 2:
-                potential_state = parts[-2] if len(parts) > 2 else parts[-1]
-                print(f"Extracted state: {potential_state}")
-            else:
-                print("Could not extract state (not enough parts)")
-        
-        # Remove sample addresses from response
-        for state in state_counts:
-            del state['sample_addresses']
         
         return jsonify(state_counts)
     except Exception as e:
