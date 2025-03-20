@@ -120,7 +120,7 @@ def upload_file():
     
     return jsonify({'error': 'Invalid file type'}), 400
 
-@app.route('/api/markets', methods=['GET'])
+@app.route('/markets', methods=['GET'])
 def get_markets():
     """Get all markets with pagination"""
     try:
@@ -161,7 +161,7 @@ def get_markets():
             'message': 'Failed to load markets. Please try again later.'
         }), 500
 
-@app.route('/api/markets/search', methods=['GET'])
+@app.route('/markets/search', methods=['GET'])
 def search_markets():
     """Search markets by coordinates within a radius"""
     try:
@@ -193,7 +193,7 @@ def search_markets():
     except (ValueError, TypeError):
         return jsonify({'error': 'Invalid coordinates or radius'}), 400
 
-@app.route('/api/markets/<market_id>', methods=['GET'])
+@app.route('/markets/<market_id>', methods=['GET'])
 def get_market(market_id):
     """Get a specific market by ID"""
     try:
@@ -220,7 +220,7 @@ def get_market(market_id):
             'message': 'Failed to load market details. Please try again later.'
         }), 500
 
-@app.route('/api/test-connection', methods=['GET'])
+@app.route('/test-connection', methods=['GET'])
 def test_connection():
     """Test MongoDB connection and return basic stats"""
     try:
@@ -245,7 +245,7 @@ def test_connection():
             'error': str(e)
         }), 500
 
-@app.route('/api/markets/state-counts', methods=['GET'])
+@app.route('/markets/state-counts', methods=['GET'])
 def get_state_counts():
     """Get the count of markets by state"""
     try:
@@ -324,7 +324,7 @@ def debug_info():
             'traceback': traceback.format_exc()
         }), 500
 
-@app.route('/api/debug/connection', methods=['GET'])
+@app.route('/debug/connection', methods=['GET'])
 def debug_connection():
     """Debug endpoint to test database connection"""
     try:
@@ -362,7 +362,7 @@ def debug_connection():
             'mongodb_uri': os.getenv('MONGODB_URI', 'Not set')
         }), 500
 
-@app.route('/api/debug/markets/sample', methods=['GET'])
+@app.route('/debug/markets/sample', methods=['GET'])
 def debug_markets_sample():
     """Debug endpoint to get a sample of markets data"""
     try:
