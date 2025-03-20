@@ -290,51 +290,59 @@ def get_state_counts():
         # Pipeline to extract state from Address and group by state
         pipeline = [
             {
-                '$project': {
-                    'state': {
-                        '$let': {
-                            'vars': {
-                                'address_parts': {
-                                    '$split': [
-                                        {
-                                            '$trim': {
-                                                'input': '$Address',
-                                                'chars': ' '
-                                            }
-                                        },
-                                        ','
-                                    ]
-                                }
-                            },
-                            'in': {
+                '$match': {
+                    'Address': { '$exists': True, '$ne': '' }
+                }
+            },
+            {
+                '$addFields': {
+                    'address_parts': {
+                        '$split': [
+                            {
                                 '$trim': {
-                                    'input': {
-                                        '$cond': {
-                                            'if': {'$gt': [{'$size': '$address_parts'}, 2]},
-                                            'then': {'$arrayElemAt': ['$address_parts', -2]},
-                                            'else': {'$arrayElemAt': ['$address_parts', -1]}
-                                        }
-                                    },
+                                    'input': { '$ifNull': ['$Address', ''] },
                                     'chars': ' '
                                 }
-                            }
+                            },
+                            ','
+                        ]
+                    }
+                }
+            },
+            {
+                '$addFields': {
+                    'parts_count': { '$size': '$address_parts' }
+                }
+            },
+            {
+                '$addFields': {
+                    'state': {
+                        '$trim': {
+                            'input': {
+                                '$cond': {
+                                    'if': { '$gt': ['$parts_count', 2] },
+                                    'then': { '$arrayElemAt': ['$address_parts', -2] },
+                                    'else': { '$arrayElemAt': ['$address_parts', -1] }
+                                }
+                            },
+                            'chars': ' '
                         }
                     }
                 }
             },
             {
                 '$match': {
-                    'state': {'$ne': ''}
+                    'state': { '$ne': '' }
                 }
             },
             {
                 '$group': {
                     '_id': '$state',
-                    'count': {'$sum': 1}
+                    'count': { '$sum': 1 }
                 }
             },
             {
-                '$sort': {'_id': 1}
+                '$sort': { '_id': 1 }
             }
         ]
         
