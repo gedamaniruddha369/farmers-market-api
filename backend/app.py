@@ -8,6 +8,7 @@ import numpy as np
 from werkzeug.utils import secure_filename
 import json
 import math
+import sys
 
 # Load environment variables
 load_dotenv()
@@ -293,79 +294,41 @@ def get_state_counts():
         for market in sample_markets:
             print(f"Address: {market.get('Address', 'No Address')}")
         
-        # Pipeline to extract state from Address and group by state
-        pipeline = [
-            {
-                '$match': {
-                    'Address': { '$exists': True, '$ne': '' }
-                }
-            },
-            {
-                '$addFields': {
-                    'address_parts': {
-                        '$split': [
-                            {
-                                '$trim': {
-                                    'input': { '$ifNull': ['$Address', ''] },
-                                    'chars': ' '
-                                }
-                            },
-                            ','
-                        ]
-                    }
-                }
-            },
-            {
-                '$addFields': {
-                    'parts_count': { '$size': '$address_parts' }
-                }
-            },
-            {
-                '$addFields': {
-                    'state': {
-                        '$trim': {
-                            'input': {
-                                '$cond': {
-                                    'if': { '$gt': ['$parts_count', 2] },
-                                    'then': { '$arrayElemAt': ['$address_parts', -2] },
-                                    'else': { '$arrayElemAt': ['$address_parts', -1] }
-                                }
-                            },
-                            'chars': ' '
-                        }
-                    }
-                }
-            },
-            {
-                '$match': {
-                    'state': { '$ne': '' }
-                }
-            },
-            {
-                '$group': {
-                    '_id': '$state',
-                    'count': { '$sum': 1 }
-                }
-            },
-            {
-                '$sort': { '_id': 1 }
-            }
-        ]
+        # Use a simpler approach to extract states
+        state_counts = {}
+        for market in markets.find({}, {'Address': 1}):
+            address = market.get('Address', '')
+            if not address:
+                continue
+                
+            # Split by comma and get the state part
+            parts = [p.strip() for p in address.split(',')]
+            
+            # If we have at least 2 parts, the second-to-last is typically the state
+            if len(parts) >= 2:
+                state = parts[-2] if len(parts) > 2 else parts[-1]
+                
+                # Only count if state looks valid (2 characters or more)
+                if len(state) >= 2:
+                    if state in state_counts:
+                        state_counts[state] += 1
+                    else:
+                        state_counts[state] = 1
         
-        # Execute pipeline and get results
-        state_counts = list(markets.aggregate(pipeline))
+        # Convert to the expected format
+        result = [{"_id": state, "count": count} for state, count in sorted(state_counts.items())]
         
         # Calculate total markets found in state counts
-        total_in_states = sum(s['count'] for s in state_counts)
+        total_in_states = sum(s["count"] for s in result)
         print(f"Total markets found in state counts: {total_in_states}")
         print(f"Difference from total: {total_count - total_in_states}")
         
         # Print state-by-state breakdown
         print("\nState-by-state breakdown:")
-        for state in state_counts:
+        for state in result:
             print(f"{state['_id']}: {state['count']} markets")
         
-        return jsonify(state_counts)
+        return jsonify(result)
     except Exception as e:
         print(f"Error in get_state_counts: {str(e)}")
         import traceback
@@ -373,6 +336,62 @@ def get_state_counts():
         return jsonify({
             'error': 'Error getting state counts',
             'details': str(e)
+        }), 500
+
+@app.route('/debug', methods=['GET'])
+def debug_info():
+    """Return debug information about the application"""
+    try:
+        db = get_db()
+        markets = db.markets
+        
+        # Test MongoDB connection
+        total_markets = markets.count_documents({})
+        
+        # Get environment variables
+        env_vars = {
+            'MONGODB_URI': os.getenv('MONGODB_URI', 'Not set'),
+            'PORT': os.getenv('PORT', 'Not set'),
+            'FLASK_ENV': os.getenv('FLASK_ENV', 'Not set'),
+            'PYTHONPATH': os.getenv('PYTHONPATH', 'Not set'),
+        }
+        
+        # Get sample data
+        sample_data = []
+        for market in markets.find().limit(2):
+            market['_id'] = str(market['_id'])
+            sample_data.append(market)
+        
+        # Directory structure
+        dirs = os.listdir('.')
+        parent_dir = os.listdir('..')
+        
+        # Python path
+        python_path = sys.path
+        
+        return jsonify({
+            'app_info': {
+                'name': 'Farmers Market API',
+                'version': '1.0.0'
+            },
+            'database': {
+                'connection': 'success',
+                'total_markets': total_markets,
+                'sample_data': sample_data
+            },
+            'environment': env_vars,
+            'file_system': {
+                'current_dir': dirs,
+                'parent_dir': parent_dir,
+                'python_path': python_path,
+                'current_working_dir': os.getcwd()
+            }
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({
+            'error': str(e),
+            'traceback': traceback.format_exc()
         }), 500
 
 if __name__ == '__main__':
