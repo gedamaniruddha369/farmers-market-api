@@ -15,11 +15,18 @@ load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": [
-    "http://localhost:3000",
-    "https://planetwiseliving.com",
-    "https://www.planetwiseliving.com"
-]}})  # Enable CORS for specific origins
+CORS(app, resources={r"/*": {
+    "origins": [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://planetwiseliving.com",
+        "https://www.planetwiseliving.com",
+        "https://farmers-market-api.onrender.com"
+    ],
+    "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    "allow_headers": ["Content-Type", "Authorization"],
+    "supports_credentials": True
+}})
 
 # Configure upload settings
 UPLOAD_FOLDER = 'uploads'
@@ -115,83 +122,31 @@ def upload_file():
 
 @app.route('/api/markets', methods=['GET'])
 def get_markets():
-    """Get all markets or filter by location"""
+    """Get all markets with pagination"""
     try:
+        # Get pagination parameters
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 10))
+        
+        # Get database connection
         db = get_db()
-        markets = db.markets
         
-        zip_code = request.args.get('zip_code')
-        state = request.args.get('state')
-        lat = request.args.get('lat')
-        lng = request.args.get('lng')
-        radius = float(request.args.get('radius', 10))  # Default 10 miles
-        page = int(request.args.get('page', 1))  # Default to page 1
-        per_page = int(request.args.get('per_page', 12))  # Default 12 items per page
-        
-        print(f"Searching with state: {state}, zip: {zip_code}, lat: {lat}, lng: {lng}, radius: {radius}, page: {page}")
-        
-        query = {}
-        
-        # Build the query based on parameters
-        if state:
-            query['Address'] = {'$regex': f', {state.upper()}[ ,]', '$options': 'i'}
-        
-        if zip_code:
-            zip_query = {'Address': {'$regex': zip_code, '$options': 'i'}}
-            if 'Address' in query:
-                # If we already have a state filter, use $and to combine them
-                query = {'$and': [query, zip_query]}
-            else:
-                query = zip_query
-        
-        if lat and lng:
-            try:
-                lat = float(lat)
-                lng = float(lng)
-                # Add geospatial query
-                geo_query = {
-                    'location': {
-                        '$near': {
-                            '$geometry': {
-                                'type': 'Point',
-                                'coordinates': [lng, lat]
-                            },
-                            '$maxDistance': radius * 1609.34  # Convert miles to meters
-                        }
-                    }
-                }
-                if query:
-                    # Combine with existing query
-                    query = {'$and': [query, geo_query]}
-                else:
-                    query = geo_query
-            except ValueError:
-                return jsonify({'error': 'Invalid coordinates'}), 400
-        
-        print(f"MongoDB query: {query}")
-        
-        # Get total count for the query
-        total_markets = markets.count_documents(query)
-        print(f"Total markets matching query: {total_markets}")
-        
-        # Calculate pagination
+        # Calculate skip value for pagination
         skip = (page - 1) * per_page
         
-        # Now perform the search with pagination
-        market_list = list(markets.find(query).skip(skip).limit(per_page))
-        print(f"Found {len(market_list)} markets for current page")
+        # Get total count of documents
+        total_markets = db.markets.count_documents({})
         
-        # Convert ObjectId to string and handle NaN values
-        for market in market_list:
+        # Get paginated markets
+        markets = list(db.markets.find({}).skip(skip).limit(per_page))
+        
+        # Convert ObjectId to string for JSON serialization
+        for market in markets:
             market['_id'] = str(market['_id'])
-            # Convert NaN values to None (null in JSON)
-            for key, value in market.items():
-                if isinstance(value, float) and math.isnan(value):
-                    market[key] = None
         
-        # Return response with pagination metadata
         return jsonify({
-            'markets': market_list,
+            'success': True,
+            'data': markets,
             'total': total_markets,
             'page': page,
             'per_page': per_page,
@@ -199,12 +154,11 @@ def get_markets():
         })
         
     except Exception as e:
-        print(f"Error in get_markets: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        print(f"Error in get_markets: {str(e)}", file=sys.stderr)
         return jsonify({
-            'error': 'Error searching markets',
-            'details': str(e)
+            'success': False,
+            'error': str(e),
+            'message': 'Failed to load markets. Please try again later.'
         }), 500
 
 @app.route('/api/markets/search', methods=['GET'])
@@ -244,13 +198,27 @@ def get_market(market_id):
     """Get a specific market by ID"""
     try:
         db = get_db()
-        markets = db.markets
-        market = markets.find_one({'id': market_id}, {'_id': 0})
+        market = db.markets.find_one({'_id': market_id})
+        
         if market:
-            return jsonify(market)
-        return jsonify({'error': 'Market not found'}), 404
+            market['_id'] = str(market['_id'])
+            return jsonify({
+                'success': True,
+                'data': market
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Market not found'
+            }), 404
+            
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print(f"Error in get_market: {str(e)}", file=sys.stderr)
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'message': 'Failed to load market details. Please try again later.'
+        }), 500
 
 @app.route('/api/test-connection', methods=['GET'])
 def test_connection():
@@ -279,64 +247,25 @@ def test_connection():
 
 @app.route('/api/markets/state-counts', methods=['GET'])
 def get_state_counts():
-    """Get count of markets for each state"""
+    """Get the count of markets by state"""
     try:
         db = get_db()
-        markets = db.markets
+        pipeline = [
+            {'$group': {'_id': '$state', 'count': {'$sum': 1}}}
+        ]
+        state_counts = list(db.markets.aggregate(pipeline))
         
-        # First, get total count of all markets
-        total_count = markets.count_documents({})
-        print(f"\nTotal markets in database: {total_count}")
-        
-        # Get a sample of raw data to inspect
-        sample_markets = list(markets.find({}, {'Address': 1}).limit(5))
-        print("\nSample market addresses:")
-        for market in sample_markets:
-            print(f"Address: {market.get('Address', 'No Address')}")
-        
-        # Use a simpler approach to extract states
-        state_counts = {}
-        for market in markets.find({}, {'Address': 1}):
-            # Handle non-string Address values
-            address = market.get('Address')
-            if not address or not isinstance(address, str):
-                continue
-                
-            # Split by comma and get the state part
-            parts = [p.strip() for p in address.split(',')]
-            
-            # If we have at least 2 parts, the second-to-last is typically the state
-            if len(parts) >= 2:
-                state = parts[-2] if len(parts) > 2 else parts[-1]
-                
-                # Only count if state looks valid (2 characters or more)
-                if len(state) >= 2:
-                    if state in state_counts:
-                        state_counts[state] += 1
-                    else:
-                        state_counts[state] = 1
-        
-        # Convert to the expected format
-        result = [{"_id": state, "count": count} for state, count in sorted(state_counts.items())]
-        
-        # Calculate total markets found in state counts
-        total_in_states = sum(s["count"] for s in result)
-        print(f"Total markets found in state counts: {total_in_states}")
-        print(f"Difference from total: {total_count - total_in_states}")
-        
-        # Print state-by-state breakdown
-        print("\nState-by-state breakdown:")
-        for state in result:
-            print(f"{state['_id']}: {state['count']} markets")
-        
-        return jsonify(result)
-    except Exception as e:
-        print(f"Error in get_state_counts: {str(e)}")
-        import traceback
-        traceback.print_exc()
         return jsonify({
-            'error': 'Error getting state counts',
-            'details': str(e)
+            'success': True,
+            'data': state_counts
+        })
+        
+    except Exception as e:
+        print(f"Error in get_state_counts: {str(e)}", file=sys.stderr)
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'message': 'Failed to load state counts. Please try again later.'
         }), 500
 
 @app.route('/debug', methods=['GET'])
@@ -393,6 +322,72 @@ def debug_info():
         return jsonify({
             'error': str(e),
             'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/debug/connection', methods=['GET'])
+def debug_connection():
+    """Debug endpoint to test database connection"""
+    try:
+        # Get database connection
+        db = get_db()
+        
+        # Test the connection
+        db.command('ping')
+        
+        # Get database stats
+        stats = db.command('dbStats')
+        
+        # Get collection stats
+        markets_stats = db.command('collStats', 'markets')
+        
+        return jsonify({
+            'success': True,
+            'message': 'Database connection successful',
+            'database_stats': {
+                'collections': stats['collections'],
+                'objects': stats['objects'],
+                'dataSize': stats['dataSize']
+            },
+            'markets_collection': {
+                'count': markets_stats['count'],
+                'size': markets_stats['size']
+            },
+            'mongodb_uri': os.getenv('MONGODB_URI', 'Not set')
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'mongodb_uri': os.getenv('MONGODB_URI', 'Not set')
+        }), 500
+
+@app.route('/api/debug/markets/sample', methods=['GET'])
+def debug_markets_sample():
+    """Debug endpoint to get a sample of markets data"""
+    try:
+        db = get_db()
+        sample = list(db.markets.find().limit(1))
+        
+        if sample:
+            # Convert ObjectId to string
+            sample[0]['_id'] = str(sample[0]['_id'])
+            return jsonify({
+                'success': True,
+                'sample': sample[0],
+                'collection_exists': True
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'No markets found in database',
+                'collection_exists': db.list_collection_names().count('markets') > 0
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
         }), 500
 
 if __name__ == '__main__':

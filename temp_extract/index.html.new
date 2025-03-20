@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PlanetWiseLiving - Find Farmers Markets Near You</title>
+  
+  <!-- Load Google Maps API with async attribute -->
+  <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBDaeWicvigtP9xPv919E-RNoxfvC-Hqik&libraries=places"></script>
+  
+  <!-- Inline CSS to avoid MIME type issues -->
+  <style>
+    /* This will be replaced with the actual CSS content */
+    /* INLINE_CSS_PLACEHOLDER */
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  
+  <!-- Inline JavaScript to avoid MIME type issues -->
+  <script>
+    // This will be replaced with the actual JavaScript content
+    // INLINE_JS_PLACEHOLDER
+  </script>
+</body>
+</html> 

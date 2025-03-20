@@ -49,7 +49,7 @@ A RESTful API for finding and exploring farmers markets. Built with Flask and Mo
 4. Set up environment variables:
    Create a `.env` file with:
    ```
-   MONGODB_URI=your_mongodb_connection_string
+   MONGODB_URI=mongodb+srv://gedamaniruddha:Ryhz0Nb6fm9QjNn1@cluster0.fgbl6.mongodb.net/farmers_market?retryWrites=true&w=majority&appName=Cluster0&tls=true
    FLASK_ENV=development
    ```
 

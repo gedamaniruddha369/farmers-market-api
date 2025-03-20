@@ -1,0 +1,11 @@
+# Allow all web crawlers to access all content
+User-agent: *
+Allow: /
+
+# Sitemap location
+Sitemap: https://planetwiseliving.com/sitemap.xml
+
+# Disallow crawling of admin or private areas if they exist
+# User-agent: *
+# Disallow: /admin/
+# Disallow: /private/ 

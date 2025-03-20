@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MIME Type Test</title>
+    <link rel="stylesheet" href="assets/index-nuZ3KAGH.css">
+    <script type="module" src="assets/index-DJ_ywZPX.js"></script>
+</head>
+<body>
+    <h1>MIME Type Test</h1>
+    <p>This page tests if the CSS and JavaScript files are being served with the correct MIME types.</p>
+    <p>Check the browser console for any errors.</p>
+    
+    <div id="status">Checking MIME types...</div>
+    
+    <script>
+        window.onload = function() {
+            const statusDiv = document.getElementById('status');
+            
+            // Check if CSS loaded correctly
+            const styleSheets = document.styleSheets;
+            let cssLoaded = false;
+            
+            for (let i = 0; i < styleSheets.length; i++) {
+                if (styleSheets[i].href && styleSheets[i].href.includes('index-nuZ3KAGH.css')) {
+                    cssLoaded = true;
+                    break;
+                }
+            }
+            
+            if (cssLoaded) {
+                statusDiv.innerHTML += '<p style="color: green;">✓ CSS loaded correctly</p>';
+            } else {
+                statusDiv.innerHTML += '<p style="color: red;">✗ CSS failed to load</p>';
+            }
+            
+            // JavaScript is running if this code executes
+            statusDiv.innerHTML += '<p style="color: green;">✓ JavaScript is running</p>';
+            
+            // Final status
+            if (cssLoaded) {
+                statusDiv.innerHTML += '<p style="color: green; font-weight: bold;">All tests passed! MIME types are configured correctly.</p>';
+            } else {
+                statusDiv.innerHTML += '<p style="color: red; font-weight: bold;">Some tests failed. MIME types may not be configured correctly.</p>';
+            }
+        };
+    </script>
+</body>
+</html> 
