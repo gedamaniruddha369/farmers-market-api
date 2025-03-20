@@ -297,8 +297,9 @@ def get_state_counts():
         # Use a simpler approach to extract states
         state_counts = {}
         for market in markets.find({}, {'Address': 1}):
-            address = market.get('Address', '')
-            if not address:
+            # Handle non-string Address values
+            address = market.get('Address')
+            if not address or not isinstance(address, str):
                 continue
                 
             # Split by comma and get the state part
