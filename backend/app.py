@@ -287,6 +287,12 @@ def get_state_counts():
         total_count = markets.count_documents({})
         print(f"\nTotal markets in database: {total_count}")
         
+        # Get a sample of raw data to inspect
+        sample_markets = list(markets.find({}, {'Address': 1}).limit(5))
+        print("\nSample market addresses:")
+        for market in sample_markets:
+            print(f"Address: {market.get('Address', 'No Address')}")
+        
         # Pipeline to extract state from Address and group by state
         pipeline = [
             {
