@@ -76,19 +76,28 @@ def extract_state(address):
     if not address:
         return None
     
+    # Convert address to string if it's not already
+    if not isinstance(address, str):
+        address = str(address)
+    
+    # Try to find state abbreviation followed by zip code
+    state_abbr_match = re.search(r',\s*([A-Z]{2})[,\s]*\d', address)
+    if state_abbr_match:
+        state_abbr = state_abbr_match.group(1)
+        if state_abbr in state_mapping:
+            return state_abbr
+    
     # Try to find state name in "City, State ZIP" format
-    state_match = re.search(r',\s*([^,\d]+)\s+\d', address)
+    state_match = re.search(r',\s*([^,\d]+?)(?:\s+\d|\s*,|\s*$)', address)
     if state_match:
         state_name = state_match.group(1).strip().lower()
         if state_name in reverse_mapping:
             return reverse_mapping[state_name]
     
-    # Try to find state abbreviation in address
-    state_abbr_match = re.search(r',\s*([A-Z]{2})\s*\d', address)
-    if state_abbr_match:
-        state_abbr = state_abbr_match.group(1)
-        if state_abbr in state_mapping:
-            return state_abbr
+    # Try to find state abbreviation anywhere in the address
+    for abbr in state_mapping.keys():
+        if f", {abbr}" in address or f",{abbr}" in address:
+            return abbr
     
     # Try to find full state name anywhere in address
     for state_name in state_mapping.values():
