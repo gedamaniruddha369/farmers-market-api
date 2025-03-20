@@ -1,1 +1,4 @@
-# This file makes the backend directory a proper Python package 
+"""
+Farmers Market API backend package.
+This makes the backend directory a proper Python package.
+""" 
