@@ -1,9 +1,9 @@
 services:
   - type: web
     name: farmers-market-api
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn wsgi_app:app
+    runtime: python
+    buildCommand: ./build.sh
+    startCommand: ./start.sh
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.11 
