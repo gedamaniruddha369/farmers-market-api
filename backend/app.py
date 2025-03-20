@@ -108,19 +108,30 @@ def update_states():
         all_markets = list(markets.find({}))
         updates = []
         state_counts = {}
+        errors = []
         
         print(f"Processing {len(all_markets)} markets...")
         
         for market in all_markets:
-            state = extract_state(market.get('Address'))
-            if state:
-                updates.append(
-                    UpdateOne(
-                        {'_id': market['_id']},  # ObjectId is fine here for querying
-                        {'$set': {'state': state}}
+            try:
+                address = market.get('Address', '')
+                if not address:
+                    errors.append(f"Market {market.get('_id')} has no Address field")
+                    continue
+                    
+                state = extract_state(address)
+                if state:
+                    updates.append(
+                        UpdateOne(
+                            {'_id': market['_id']},  # ObjectId is fine here for querying
+                            {'$set': {'state': state}}
+                        )
                     )
-                )
-                state_counts[state] = state_counts.get(state, 0) + 1
+                    state_counts[state] = state_counts.get(state, 0) + 1
+                else:
+                    errors.append(f"Could not extract state from address: {address}")
+            except Exception as e:
+                errors.append(f"Error processing market {market.get('_id')}: {str(e)}")
         
         if updates:
             result = markets.bulk_write(updates)
@@ -131,13 +142,15 @@ def update_states():
                 'message': f'Updated {result.modified_count} markets with state information',
                 'state_counts': state_counts,
                 'total_markets': len(all_markets),
-                'total_updates': len(updates)
+                'total_updates': len(updates),
+                'errors': errors[:100] if errors else []  # Return first 100 errors if any
             })
         else:
             return jsonify({
                 'success': True,
                 'message': 'No updates needed',
-                'total_markets': len(all_markets)
+                'total_markets': len(all_markets),
+                'errors': errors[:100] if errors else []  # Return first 100 errors if any
             })
             
     except Exception as e:
