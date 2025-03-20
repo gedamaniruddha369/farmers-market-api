@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template, Blueprint
 from flask_cors import CORS
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateOne
 from dotenv import load_dotenv
 import os
 import pandas as pd
@@ -9,6 +9,7 @@ from werkzeug.utils import secure_filename
 import json
 import math
 import sys
+import re
 
 # Load environment variables
 load_dotenv()
@@ -49,6 +50,89 @@ def get_db():
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def extract_state(address):
+    """Extract state from address string"""
+    # State abbreviations and full names mapping
+    state_mapping = {
+        'AL': 'Alabama', 'AK': 'Alaska', 'AZ': 'Arizona', 'AR': 'Arkansas',
+        'CA': 'California', 'CO': 'Colorado', 'CT': 'Connecticut', 'DE': 'Delaware',
+        'FL': 'Florida', 'GA': 'Georgia', 'HI': 'Hawaii', 'ID': 'Idaho',
+        'IL': 'Illinois', 'IN': 'Indiana', 'IA': 'Iowa', 'KS': 'Kansas',
+        'KY': 'Kentucky', 'LA': 'Louisiana', 'ME': 'Maine', 'MD': 'Maryland',
+        'MA': 'Massachusetts', 'MI': 'Michigan', 'MN': 'Minnesota', 'MS': 'Mississippi',
+        'MO': 'Missouri', 'MT': 'Montana', 'NE': 'Nebraska', 'NV': 'Nevada',
+        'NH': 'New Hampshire', 'NJ': 'New Jersey', 'NM': 'New Mexico', 'NY': 'New York',
+        'NC': 'North Carolina', 'ND': 'North Dakota', 'OH': 'Ohio', 'OK': 'Oklahoma',
+        'OR': 'Oregon', 'PA': 'Pennsylvania', 'RI': 'Rhode Island', 'SC': 'South Carolina',
+        'SD': 'South Dakota', 'TN': 'Tennessee', 'TX': 'Texas', 'UT': 'Utah',
+        'VT': 'Vermont', 'VA': 'Virginia', 'WA': 'Washington', 'WV': 'West Virginia',
+        'WI': 'Wisconsin', 'WY': 'Wyoming', 'DC': 'District of Columbia'
+    }
+    
+    # Create reverse mapping (full name to abbreviation)
+    reverse_mapping = {v.lower(): k for k, v in state_mapping.items()}
+    
+    if not address:
+        return None
+        
+    # Try to find state abbreviation in address
+    state_abbr_match = re.search(r',\s*([A-Z]{2})\s*\d', address)
+    if state_abbr_match:
+        state_abbr = state_abbr_match.group(1)
+        if state_abbr in state_mapping:
+            return state_abbr
+    
+    # Try to find full state name in address
+    for state_name in state_mapping.values():
+        if state_name.lower() in address.lower():
+            return reverse_mapping[state_name.lower()]
+    
+    return None
+
+@app.route('/update-states', methods=['POST'])
+def update_states():
+    """Temporary endpoint to update state fields"""
+    try:
+        db = get_db()
+        markets = db.markets
+        
+        # Get all markets
+        all_markets = list(markets.find({}))
+        updates = []
+        
+        print(f"Processing {len(all_markets)} markets...")
+        
+        for market in all_markets:
+            state = extract_state(market.get('Address'))
+            if state:
+                updates.append(
+                    UpdateOne(
+                        {'_id': market['_id']},
+                        {'$set': {'state': state}}
+                    )
+                )
+        
+        if updates:
+            result = markets.bulk_write(updates)
+            # Create index on state field
+            markets.create_index('state')
+            return jsonify({
+                'success': True,
+                'message': f'Updated {result.modified_count} markets with state information'
+            })
+        else:
+            return jsonify({
+                'success': True,
+                'message': 'No updates needed'
+            })
+            
+    except Exception as e:
+        print(f"Error updating state fields: {str(e)}", file=sys.stderr)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 def clean_data(df):
     """Clean DataFrame by handling NaN values and converting data types"""
