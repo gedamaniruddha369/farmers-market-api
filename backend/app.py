@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 from werkzeug.utils import secure_filename
 import json
+import math
 
 # Load environment variables
 load_dotenv()
@@ -52,6 +53,8 @@ class CustomJSONEncoder(json.JSONEncoder):
     """Custom JSON encoder to handle special data types"""
     def default(self, obj):
         if isinstance(obj, (np.integer, np.floating)):
+            if math.isnan(obj):
+                return None
             return float(obj) if isinstance(obj, np.floating) else int(obj)
         elif isinstance(obj, np.bool_):
             return bool(obj)
@@ -107,17 +110,93 @@ def upload_file():
 @app.route('/api/markets', methods=['GET'])
 def get_markets():
     """Get all markets or filter by location"""
-    zip_code = request.args.get('zip_code')
-    state = request.args.get('state')
-    
-    query = {}
-    if zip_code:
-        query['address.zipCode'] = zip_code
-    if state:
-        query['address.state'] = state.upper()
-    
-    market_list = list(markets.find(query, {'_id': 0}))
-    return jsonify(market_list)
+    try:
+        zip_code = request.args.get('zip_code')
+        state = request.args.get('state')
+        lat = request.args.get('lat')
+        lng = request.args.get('lng')
+        radius = float(request.args.get('radius', 10))  # Default 10 miles
+        page = int(request.args.get('page', 1))  # Default to page 1
+        per_page = int(request.args.get('per_page', 12))  # Default 12 items per page
+        
+        print(f"Searching with state: {state}, zip: {zip_code}, lat: {lat}, lng: {lng}, radius: {radius}, page: {page}")
+        
+        query = {}
+        
+        # Build the query based on parameters
+        if state:
+            query['Address'] = {'$regex': f', {state.upper()}[ ,]', '$options': 'i'}
+        
+        if zip_code:
+            zip_query = {'Address': {'$regex': zip_code, '$options': 'i'}}
+            if 'Address' in query:
+                # If we already have a state filter, use $and to combine them
+                query = {'$and': [query, zip_query]}
+            else:
+                query = zip_query
+        
+        if lat and lng:
+            try:
+                lat = float(lat)
+                lng = float(lng)
+                # Add geospatial query
+                geo_query = {
+                    'location': {
+                        '$near': {
+                            '$geometry': {
+                                'type': 'Point',
+                                'coordinates': [lng, lat]
+                            },
+                            '$maxDistance': radius * 1609.34  # Convert miles to meters
+                        }
+                    }
+                }
+                if query:
+                    # Combine with existing query
+                    query = {'$and': [query, geo_query]}
+                else:
+                    query = geo_query
+            except ValueError:
+                return jsonify({'error': 'Invalid coordinates'}), 400
+        
+        print(f"MongoDB query: {query}")
+        
+        # Get total count for the query
+        total_markets = markets.count_documents(query)
+        print(f"Total markets matching query: {total_markets}")
+        
+        # Calculate pagination
+        skip = (page - 1) * per_page
+        
+        # Now perform the search with pagination
+        market_list = list(markets.find(query).skip(skip).limit(per_page))
+        print(f"Found {len(market_list)} markets for current page")
+        
+        # Convert ObjectId to string and handle NaN values
+        for market in market_list:
+            market['_id'] = str(market['_id'])
+            # Convert NaN values to None (null in JSON)
+            for key, value in market.items():
+                if isinstance(value, float) and math.isnan(value):
+                    market[key] = None
+        
+        # Return response with pagination metadata
+        return jsonify({
+            'markets': market_list,
+            'total': total_markets,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': math.ceil(total_markets / per_page)
+        })
+        
+    except Exception as e:
+        print(f"Error in get_markets: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'error': 'Error searching markets',
+            'details': str(e)
+        }), 500
 
 @app.route('/api/markets/search', methods=['GET'])
 def search_markets():
@@ -140,7 +219,10 @@ def search_markets():
             }
         }
         
-        market_list = list(markets.find(query, {'_id': 0}))
+        market_list = list(markets.find(query))
+        # Convert ObjectId to string for JSON serialization
+        for market in market_list:
+            market['_id'] = str(market['_id'])
         return jsonify(market_list)
     except (ValueError, TypeError):
         return jsonify({'error': 'Invalid coordinates or radius'}), 400
@@ -152,6 +234,139 @@ def get_market(market_id):
     if market:
         return jsonify(market)
     return jsonify({'error': 'Market not found'}), 404
+
+# Add a new route to test MongoDB connection
+@app.route('/api/test-connection', methods=['GET'])
+def test_connection():
+    """Test MongoDB connection and return basic stats"""
+    try:
+        # Test MongoDB connection
+        total_markets = markets.count_documents({})
+        sample_market = markets.find_one()
+        if sample_market:
+            sample_market['_id'] = str(sample_market['_id'])
+        
+        return jsonify({
+            'status': 'connected',
+            'total_markets': total_markets,
+            'sample_market': sample_market,
+            'database_name': db.name,
+            'collection_name': markets.name
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+
+@app.route('/api/markets/state-counts', methods=['GET'])
+def get_state_counts():
+    """Get count of markets for each state"""
+    try:
+        # First, get total count of all markets
+        total_count = markets.count_documents({})
+        print(f"\nTotal markets in database: {total_count}")
+        
+        # Pipeline to extract state from Address and group by state
+        pipeline = [
+            {
+                '$project': {
+                    'state': {
+                        '$let': {
+                            'vars': {
+                                'address_parts': {
+                                    '$split': [
+                                        {
+                                            '$trim': {
+                                                'input': '$Address'
+                                            }
+                                        },
+                                        ','
+                                    ]
+                                }
+                            },
+                            'in': {
+                                '$trim': {
+                                    'input': {
+                                        '$cond': {
+                                            'if': {'$gt': [{'$size': '$address_parts'}, 2]},
+                                            'then': {'$arrayElemAt': ['$address_parts', -2]},
+                                            'else': {'$arrayElemAt': ['$address_parts', -1]}
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    'Address': 1
+                }
+            },
+            {
+                '$match': {
+                    'state': {'$ne': ''}
+                }
+            },
+            {
+                '$group': {
+                    '_id': '$state',
+                    'count': {'$sum': 1},
+                    'sample_addresses': {'$push': '$Address'}
+                }
+            },
+            {
+                '$project': {
+                    'count': 1,
+                    'sample_addresses': {'$slice': ['$sample_addresses', 3]}
+                }
+            },
+            {
+                '$sort': {'_id': 1}
+            }
+        ]
+        
+        # Execute pipeline and get results
+        state_counts = list(markets.aggregate(pipeline))
+        
+        # Calculate total markets found in state counts
+        total_in_states = sum(s['count'] for s in state_counts)
+        print(f"Total markets found in state counts: {total_in_states}")
+        print(f"Difference from total: {total_count - total_in_states}")
+        
+        # Print state-by-state breakdown
+        print("\nState-by-state breakdown:")
+        for state in state_counts:
+            print(f"{state['_id']}: {state['count']} markets")
+            print("Sample addresses:")
+            for addr in state['sample_addresses'][:3]:
+                print(f"  {addr}")
+        
+        # Print states with potential issues
+        print("\nChecking for potential issues in state extraction...")
+        sample_markets = list(markets.find({}).limit(5))
+        for market in sample_markets:
+            addr = market.get('Address', '')
+            parts = [p.strip() for p in addr.split(',')]
+            print(f"\nAddress: {addr}")
+            print(f"Parts: {parts}")
+            if len(parts) >= 2:
+                potential_state = parts[-2] if len(parts) > 2 else parts[-1]
+                print(f"Extracted state: {potential_state}")
+            else:
+                print("Could not extract state (not enough parts)")
+        
+        # Remove sample addresses from response
+        for state in state_counts:
+            del state['sample_addresses']
+        
+        return jsonify(state_counts)
+    except Exception as e:
+        print(f"Error in get_state_counts: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'error': 'Error getting state counts',
+            'details': str(e)
+        }), 500
 
 if __name__ == '__main__':
     # Get port from environment variable or default to 5000
