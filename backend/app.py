@@ -198,9 +198,10 @@ def update_states():
                     errors.append(f"Market at index {i} has no _id field")
                     continue
                 
-                address = market.get('Address', '')
+                # Check for both possible address field names
+                address = market.get('Address', market.get('Market_Address', ''))
                 if not address:
-                    errors.append(f"Market {market_id} has no Address field")
+                    errors.append(f"Market {market_id} has no Address or Market_Address field")
                     continue
                 
                 if not isinstance(address, str):
@@ -490,9 +491,47 @@ def get_state_counts():
     try:
         db = get_db()
         pipeline = [
+            # First try to group by state if it exists
             {'$group': {'_id': '$state', 'count': {'$sum': 1}}}
         ]
         state_counts = list(db.markets.aggregate(pipeline))
+        
+        # If we have no results with state fields or only null state values,
+        # try to extract states from Market_Address field and count those
+        if not state_counts or (len(state_counts) == 1 and state_counts[0]['_id'] is None):
+            print("No state fields found, attempting to extract from addresses", file=sys.stderr)
+            
+            # First update all market records with state information
+            # This is similar to the update_states endpoint but simplified
+            updated_count = 0
+            markets = list(db.markets.find({}))
+            updates = []
+            
+            for market in markets:
+                if not isinstance(market, dict):
+                    continue
+                    
+                # Check for both possible address field names
+                address = market.get('Address', market.get('Market_Address', ''))
+                if not address or not isinstance(address, str):
+                    continue
+                    
+                state = extract_state(address)
+                if state:
+                    updates.append(
+                        UpdateOne(
+                            {'_id': market.get('_id')},
+                            {'$set': {'state': state}}
+                        )
+                    )
+            
+            if updates:
+                result = db.markets.bulk_write(updates)
+                updated_count = result.modified_count
+                print(f"Updated {updated_count} markets with state information", file=sys.stderr)
+                
+                # Now try the aggregation again
+                state_counts = list(db.markets.aggregate(pipeline))
         
         return jsonify({
             'success': True,
