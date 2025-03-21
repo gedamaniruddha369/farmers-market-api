@@ -654,6 +654,50 @@ def debug_markets_sample():
             'error': str(e)
         }), 500
 
+@api.route('/markets/<string:id>', methods=['GET'])
+def get_market_by_id(id):
+    """Get market details by ID"""
+    try:
+        db = get_db()
+        
+        # Try to find the market by ID first
+        market = None
+        
+        # Check if the ID is a valid ObjectId
+        try:
+            from bson.objectid import ObjectId
+            if ObjectId.is_valid(id):
+                market = db.markets.find_one({"_id": ObjectId(id)})
+        except Exception:
+            # If there's an error with ObjectId, continue with other lookup methods
+            pass
+            
+        # If not found by ObjectId, try looking up by the usda_listing_id or other fields
+        if not market:
+            market = db.markets.find_one({"usda_listing_id": id})
+            
+        # If still not found, try any other identifier that might be stored
+        if not market:
+            market = db.markets.find_one({"id": id})
+            
+        if not market:
+            return jsonify({"success": False, "error": "Market not found"}), 404
+        
+        # Convert ObjectId to string for JSON serialization
+        market["_id"] = str(market["_id"])
+        
+        return jsonify({
+            "success": True,
+            "market": market
+        })
+    except Exception as e:
+        print(f"Error in get_market_by_id: {str(e)}", file=sys.stderr)
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "message": "Failed to retrieve market details. Please try again later."
+        }), 500
+
 # Register the blueprint
 app.register_blueprint(api)
 
