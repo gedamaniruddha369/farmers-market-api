@@ -230,8 +230,8 @@ const MarketPage: React.FC = () => {
 
     // Search in market info
     const marketInfo = [
-      market.Name || '',
-      market.Address || '',
+      market.Name || market["Market_Name "] || market.market_name || '',
+      market.Address || market.Market_Address || market.market_address || '',
       market.phone_number || '',
       market.website || '',
       market.google_maps_link || '',
@@ -450,10 +450,10 @@ const MarketPage: React.FC = () => {
           {/* Market Details */}
           <div className="p-6">
             <h1 className="text-3xl font-bold text-green-800 mb-2">
-              {googleData?.name || market.Name}
+              {googleData?.name || market.Name || market["Market_Name "] || market.market_name}
             </h1>
             <p className="text-gray-600 mb-6">
-              {googleData?.formatted_address || market.Address}
+              {googleData?.formatted_address || market.Address || market.Market_Address || market.market_address}
             </p>
 
             {/* Search Box */}

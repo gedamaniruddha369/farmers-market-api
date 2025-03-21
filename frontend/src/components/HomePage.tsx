@@ -4,6 +4,7 @@ import { states, stateAbbreviations } from '../data';
 import { Market } from '../types';
 import FeaturedMarkets from './FeaturedMarkets';
 import { API_URL, buildApiUrl } from '../services/apiConfig';
+import { getStateMarketCounts } from '../services/api';
 
 interface StateCount {
   _id: string;
@@ -21,18 +22,12 @@ const HomePage: React.FC = () => {
   useEffect(() => {
     const fetchStateCounts = async () => {
       try {
-        const response = await fetch(buildApiUrl('markets/state-counts'));
-        if (!response.ok) {
-          throw new Error('Failed to fetch state counts');
-        }
-        const data = await response.json();
-        console.log('State counts data:', data);
+        const data = await getStateMarketCounts();
+        const totalMarkets = data.reduce((acc: number, state: { count: number }) => acc + state.count, 0);
         setStateCounts(data);
-        const total = data.reduce((acc: number, curr: StateCount) => acc + curr.count, 0);
-        console.log('Total markets calculated:', total);
-        setTotalMarkets(total);
-      } catch (err) {
-        console.error('Error fetching state counts:', err);
+        setTotalMarkets(totalMarkets);
+      } catch (error) {
+        console.error('Error fetching state counts:', error);
       }
     };
 
@@ -45,16 +40,16 @@ const HomePage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      let queryParams = '';
+      let queryParams = new URLSearchParams();
       if (/^\d{5}$/.test(searchQuery)) {
-        queryParams = `zip_code=${searchQuery}`;
+        queryParams.append('q', searchQuery);
       } else if (searchQuery.length === 2) {
-        queryParams = `state=${searchQuery.toUpperCase()}`;
+        queryParams.append('state', searchQuery.toUpperCase());
       } else {
         throw new Error('Please enter a valid ZIP code or state abbreviation (e.g., VA)');
       }
 
-      const url = buildApiUrl(`markets?${queryParams}`);
+      const url = buildApiUrl(`/api/markets/search?${queryParams}`);
       console.log('Fetching:', url);
       const response = await fetch(url);
       
@@ -83,7 +78,13 @@ const HomePage: React.FC = () => {
       navigator.geolocation.getCurrentPosition(
         async (position) => {
           try {
-            const url = buildApiUrl(`markets?lat=${position.coords.latitude}&lng=${position.coords.longitude}&radius=10`);
+            const queryParams = new URLSearchParams({
+              lat: position.coords.latitude.toString(),
+              lng: position.coords.longitude.toString(),
+              radius: '10'
+            });
+            
+            const url = buildApiUrl(`/api/markets/search?${queryParams}`);
             console.log('Fetching:', url);
             const response = await fetch(url);
             
