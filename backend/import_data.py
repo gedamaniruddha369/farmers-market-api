@@ -124,19 +124,23 @@ def import_data(csv_path):
         # Drop existing collection
         markets.drop()
         
-        # Create geospatial index
-        markets.create_index([("location", GEOSPHERE)])
-        
-        # Create text index for searching
-        markets.create_index([
-            ("listing_name", "text"),
-            ("listing_desc", "text")
-        ])
-        
-        # Create index for common queries
-        markets.create_index("id", unique=True)
-        markets.create_index("address.state")
-        markets.create_index("address.zipCode")
+        # Create indexes
+        try:
+            # Create geospatial index
+            markets.create_index([("location", GEOSPHERE)])
+            
+            # Create text index for searching
+            markets.create_index([
+                ("listing_name", "text"),
+                ("listing_desc", "text")
+            ])
+            
+            # Create index for common queries
+            markets.create_index("id", unique=True, name="id_unique_index")
+            markets.create_index("address.state")
+            markets.create_index("address.zipCode")
+        except Exception as e:
+            print(f"Warning: Error creating indexes: {str(e)}")
         
         # Insert records
         if records:

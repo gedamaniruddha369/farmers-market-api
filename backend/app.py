@@ -49,10 +49,20 @@ def get_db():
     
     # Create indexes for better search performance
     markets = db.markets
-    markets.create_index([("Name", "text"), ("Address", "text")])
-    markets.create_index("state")
-    markets.create_index("usda_listing_id", unique=True)
-    markets.create_index([("longitude", 1), ("latitude", 1)])
+    try:
+        # Create text index for search
+        markets.create_index([("Name", "text"), ("Address", "text")])
+        # Create index for state queries
+        markets.create_index("state")
+        # Create index for USDA listing ID
+        # Use a more specific name to avoid conflicts
+        markets.create_index("usda_listing_id", name="usda_listing_id_index")
+        # Create geospatial index
+        markets.create_index([("longitude", 1), ("latitude", 1)])
+    except Exception as e:
+        # Log the error but continue, as the application can still function
+        # with existing indexes
+        print(f"Warning: Error creating indexes: {str(e)}")
     
     return db
 
